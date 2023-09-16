@@ -52,7 +52,8 @@ async function getMedia(deviceId) {
     };
     try {
         myStream = await navigator.mediaDevices.getUserMedia(
-            deviceId ? cameraConstraints : initialConstrains
+            ({ video: true })
+            // deviceId ? cameraConstraints : initialConstrains
         );
         myFace.srcObject = myStream;
         if (!deviceId) {
@@ -111,26 +112,36 @@ camerasSelect.addEventListener("input", handleCameraChange);
 
 // 하단은 Welcome Form (방 선택 및 입장)
 const welcome = document.getElementById("welcome");
-const welcomeForm = welcome.querySelector("form");
+const welcomeRoomName = welcome.querySelector("#roomName")
+const welcomeNickName = welcome.querySelector("#nickName")
+const nicknameContainer = document.querySelector("#userNickname");
 
 // 방에 접속하면 방입력 숨기고, 캠 보이고, 캠 켜기
 async function initCall() {
     welcome.hidden = true;
     call.hidden = false;
     await getMedia();
-    makeConnection();
+    if (myStream) {
+        makeConnection();
+    } else {
+        console.error("Failed to get media");
+    }
 }
-
 
 async function handleWelcomeSubmit(event) {
     event.preventDefault();
-    const input = welcomeForm.querySelector("input");
+    // const input = welcomeRoomName.querySelector("input");
+    // roomName = input.value;
+    // input.value = "";
     await initCall();
-    socket.emit("join_room", input.value);
-    roomName = input.value;
-    input.value = "";
+    roomName = welcomeRoomName.value;
+    welcomeRoomName.value = "";
+    nickname = welcomeNickName.value;
+    welcomeNickname.value = "";
+    nicknameContainer.innerText = nickname;
+    socket.emit("join_room", roomName);
 }
-welcomeForm.addEventListener("submit", handleWelcomeSubmit);
+welcomeRoomName.addEventListener("submit", handleWelcomeSubmit);
 
 // Socket Code
 
@@ -188,12 +199,52 @@ function makeConnection() { // track들을 개별적으로 추가
             },
         ]
     });
+    console.log("stun 서버 연결 확인 : ", myPeerConnection.getConfiguration());
+
+    // ICE 연결 상태 모니터링
+    myPeerConnection.addEventListener("iceconnectionstatechange", () => {
+        console.log("ICE 연결 상태 : ", myPeerConnection.iceConnectionState);
+    });
+
+    // 선택된 ICE 후보 쌍 모니터링 (Chrome only)
+    myPeerConnection.addEventListener('icegatheringstatechange', () => {
+        if (myPeerConnection.iceGatheringState === 'complete') {
+            if (myPeerConnection && myPeerConnection.sctp && myPeerConnection.sctp.transport && myPeerConnection.sctp.transport.iceTransport) {
+                const selectedPair = myPeerConnection.sctp.transport.iceTransport.getSelectedCandidatePair();
+                console.log("선택된 ICE 후보 쌍");
+                console.log("Selected local candidate:", selectedPair.local);
+                console.log("Selected remote candidate:", selectedPair.remote);
+            } else {
+                console.error('Cannot access getSelectedCandidatePair');
+            }
+        }
+    });
+
     myPeerConnection.addEventListener("icecandidate", handleIce);
+
+    // Deprecated된 addstream 대신 track 이벤트 사용
+    myPeerConnection.addEventListener("track", (event) => {
+        const peerFace = document.getElementById("peerFace");
+        if (peerFace.srcObject !== event.streams[0]) {
+            peerFace.srcObject = event.streams[0];
+            console.log('Received remote stream');
+        }
+    });
+
+    // ICE 연결 상태 모니터링
+    myPeerConnection.addEventListener("iceconnectionstatechange", () => {
+        console.log(myPeerConnection.iceConnectionState);
+    });
+
+    myStream.getTracks().forEach((track) =>
+        myPeerConnection.addTrack(track, myStream)
+    );
+
     // 양쪽 브라우저에서 카메라와 마이크의 데이터 stream을 받아서 연결 안에 넣기
-    myPeerConnection.addEventListener("addstream", handleAddStream);
-    myStream
-        .getTracks()
-        .forEach((track) => myPeerConnection.addTrack(track, myStream));
+    // myPeerConnection.addEventListener("addstream", handleAddStream);
+    // myStream
+    //     .getTracks()
+    //     .forEach((track) => myPeerConnection.addTrack(track, myStream));
 }
 
 function handleIce(data) { // ice candidate를 받으면 서버로 보내겠다
